@@ -6,6 +6,7 @@ module CA (
   ) where
 
 import qualified Data.ByteString as S
+import qualified Data.ByteString.Char8 as C
 import           Data.ByteString (ByteString)
 
 import Control.Concurrent
@@ -102,17 +103,25 @@ sslGenCsr (RawRsaKey key) subj =
       withProcess (silent ("openssl req -new -key " ++ csrkey ++ " -out " ++ csr ++ " -subj " ++ show subj ++ " -days 365")) $ \ph ->
         withFile csr ReadMode (fmap RawCsr . S.hGetContents)
 
+v3ext = C.pack . unlines $ [
+    "authorityKeyIdentifier=keyid,issuer"
+  , "subjectKeyIdentifier=hash"
+  , "basicConstraints = CA:true,pathlen:10"
+  , "keyUsage = cRLSign,keyCertSign" ]
+
 sslNewCAWithCsr :: RawCsr -> X509CA -> IO (RawX509Crt, Int)
 sslNewCAWithCsr (RawCsr csr) (X509CA (RawX509Crt issuer) (RawRsaKey issuerKey) serial) =
+  withTempFile "v3ext" $ \v3extFile ->
   withTempFile "csr" $ \csrFile ->
   withTempFile "issuer" $ \issuerCA ->
   withTempFile "issuerKey" $ \issuerCAKey ->
   withTempFile "newcert" $ \newcert -> do
+    S.writeFile v3extFile v3ext
     S.writeFile csrFile csr
     S.writeFile issuerCAKey issuerKey
     S.writeFile issuerCA issuer
     let serial' = 1 + serial
-    withProcess (silent ("openssl x509 -req -in " ++ csrFile ++ " -CA " ++ issuerCA ++ " -CAform DER " ++ " -CAkey " ++ issuerCAKey ++ " -out " ++ newcert ++ " -outform DER -days 365 -set_serial " ++ show serial')) $ \ph -> withFile newcert ReadMode (\h -> S.hGetContents h >>= \crt -> return (RawX509Crt crt, serial'))
+    withProcess (silent ("openssl x509 -req -in " ++ csrFile ++ " -extfile " ++ v3extFile ++ " -CA " ++ issuerCA ++ " -CAform DER " ++ " -CAkey " ++ issuerCAKey ++ " -out " ++ newcert ++ " -outform DER -days 365 -set_serial " ++ show serial')) $ \ph -> withFile newcert ReadMode (\h -> S.hGetContents h >>= \crt -> return (RawX509Crt crt, serial'))
 
 newCA :: X509Subj        -- ^ x509 subject
       -> Maybe X509CA    -- ^ issuer, Nothing means self-signed

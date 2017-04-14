@@ -25,13 +25,14 @@ ouSubj      = X509Subj "US" "CA" "San Diego" "none" "attest" [ "attest" ]
 
 makeRootCA = newCA defaultSubj Nothing
 
-makeSizedChainHelper :: Int -> X509CA -> IO [ByteString]
-makeSizedChainHelper 0 _ = return mempty
-makeSizedChainHelper k issuer = do
-  ca <- newCA ouSubj (Just issuer)
-  liftM (x509CertRaw ca:) (makeSizedChainHelper (pred k) ca)
+makeSizedChainHelper :: Int -> Int -> X509CA -> IO [ByteString]
+makeSizedChainHelper n k issuer
+  | k == n = return mempty
+  | k  < n = do
+      ca <- newCA ouSubj {subjCName = "attest" ++ show k} (Just issuer)
+      liftM (x509CertRaw ca:) (makeSizedChainHelper n (succ k) ca)
 
-makeSizedChainOrdered k ca = liftM (reverse) (makeSizedChainHelper k ca)
+makeSizedChainOrdered k ca = liftM (reverse) (makeSizedChainHelper k 1 ca)
 
 newtype SmallChainSize = SmallChainSize Int deriving (Show, Eq, Ord)
 
@@ -60,9 +61,9 @@ prop_ordered_chain_can_be_validate (SmallChainSize chainsize) = monadicIO $ do
   let rootca      = last chain
       trusted = makeCertificateStore [rootca]
       nocache = exceptionValidationCache []
-  failedResason <- run (validate HashSHA256 defaultHooks defaultChecksNoFQDN trusted nocache ("ignored", mempty) cs)
-  run (print failedResason)
-  assert (null failedResason)
+  failedReason <- run (validate HashSHA256 defaultHooks defaultChecksNoFQDN trusted nocache ("ignored", mempty) cs)
+  when (not (null failedReason)) (run (mapM_ print failedReason))
+  assert (null failedReason)
 
 return []
 runTests = $quickCheckAll
